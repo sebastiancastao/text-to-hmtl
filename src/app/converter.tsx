@@ -99,6 +99,53 @@ function formatInline(text: string): string {
     .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
 }
 
+function htmlToMarkdown(html: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  return walkNode(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function walkNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? "";
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+  const el = node as HTMLElement;
+  const tag = el.tagName.toLowerCase();
+  const style = el.getAttribute("style") ?? "";
+  const isBold =
+    tag === "strong" || tag === "b" ||
+    /font-weight\s*:\s*(bold|700|800|900)/i.test(style);
+  const isItalic =
+    tag === "em" || tag === "i" ||
+    /font-style\s*:\s*italic/i.test(style);
+
+  const inner = Array.from(el.childNodes).map(walkNode).join("");
+
+  switch (tag) {
+    case "h1": return `# ${inner.trim()}\n\n`;
+    case "h2": return `## ${inner.trim()}\n\n`;
+    case "h3": return `### ${inner.trim()}\n\n`;
+    case "a": {
+      const href = el.getAttribute("href") ?? "";
+      return `[${inner}](${href})`;
+    }
+    case "li":  return `- ${inner.trim()}\n`;
+    case "ul":
+    case "ol":  return `${inner}\n`;
+    case "br":  return "\n";
+    case "p":
+    case "div": return `${inner.trim()}\n\n`;
+    default: {
+      let result = inner;
+      if (isItalic) result = `*${result}*`;
+      if (isBold)   result = `**${result}**`;
+      return result;
+    }
+  }
+}
+
 export default function Converter() {
   const [text, setText] = useState("");
   const [html, setHtml] = useState("");
@@ -122,6 +169,30 @@ export default function Converter() {
   function handleTextChange(value: string) {
     setText(value);
     setHtml(convertToHtml(value));
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const htmlData = e.clipboardData.getData("text/html");
+    if (!htmlData) return; // no HTML in clipboard, let default paste happen
+
+    e.preventDefault();
+
+    // Convert pasted HTML to markdown
+    const markdown = htmlToMarkdown(htmlData);
+
+    const ta = textareaRef.current;
+    const start = ta ? ta.selectionStart : text.length;
+    const end = ta ? ta.selectionEnd : text.length;
+    const newText = text.slice(0, start) + markdown + text.slice(end);
+    handleTextChange(newText);
+
+    setTimeout(() => {
+      if (ta) {
+        const pos = start + markdown.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+      }
+    }, 0);
   }
 
   function handleCopy() {
@@ -404,6 +475,7 @@ export default function Converter() {
               placeholder={"# Título\n\nEscribe tu texto aquí...\n\n- Lista item 1\n- Lista item 2\n\nTexto con **negrita** y *cursiva*."}
               value={text}
               onChange={(e) => handleTextChange(e.target.value)}
+              onPaste={handlePaste}
             />
             <p className="text-xs text-zinc-500">
               Soporta:{" "}
